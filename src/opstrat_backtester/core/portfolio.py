@@ -32,10 +32,6 @@ class Portfolio:
         """
         metadata = metadata or {}
         trade_cost = quantity * price
-        
-        if self.cash < trade_cost and quantity > 0:
-            print(f"Warning: Insufficient cash to execute trade on {trade_date} for {ticker}")
-            return False
 
         self.cash -= trade_cost
         
