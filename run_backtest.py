@@ -6,12 +6,11 @@ from typing import List, Dict, Any, Optional
 # --- Import from the installed library ---
 from opstrat_backtester.core.strategy import Strategy
 from opstrat_backtester.core.engine import Backtester
-from opstrat_backtester.analytics.plots import plot_pnl  # This is implemented now  
+from opstrat_backtester.analytics.plots import plot_pnl
+# Import the new data source
+from opstrat_backtester.data_loader import OplabDataSource 
 
-# ==============================================================================
-# 1. Define the Strategy (User-facing code)
-# ==============================================================================
-
+# ... (The SimpleDeltaHedgeStrategy class remains the same) ...
 class SimpleDeltaHedgeStrategy(Strategy):
     """
     A simple, illustrative strategy:
@@ -116,7 +115,6 @@ class SimpleDeltaHedgeStrategy(Strategy):
                 })
         
         return signals
-
 # ==============================================================================
 # 2. Configure and Run the Backtest (User-facing code)
 # ==============================================================================
@@ -128,31 +126,29 @@ if __name__ == "__main__":
     END_DATE = "2023-03-31"
     INITIAL_CASH = 100_000.00
     
-    # Optional: Override the default cache location using an Environment Variable
-    # os.environ['OPSTRAT_CACHE_DIR'] = '/tmp/my_custom_cache' 
+    # 1. Instantiate the Data Source
+    oplab_data_source = OplabDataSource()
     
-    # 1. Instantiate the Strategy
+    # 2. Instantiate the Strategy
     my_strategy = SimpleDeltaHedgeStrategy(initial_dte=60, exit_dte=30)
 
-    # 2. Instantiate the Backtester
-    # NOTE: The Backtester instance handles ALL data loading/caching/streaming internally.
+    # 3. Instantiate the Backtester with the datasource
     backtester = Backtester(
-        spot_symbol=SPOT_SYMBOL,
         strategy=my_strategy,
+        datasource=oplab_data_source,
         start_date=START_DATE,
         end_date=END_DATE,
+        spot_symbol=SPOT_SYMBOL,
         initial_cash=INITIAL_CASH,
-        # cache_dir='/mnt/large_drive/my_cache' # Can also be passed directly
     )
 
-    # 3. Run the Backtest (Streaming happens here)
-    print("\n--- Starting Backtest Execution ---")
+    # 4. Run the Backtest
+    print("\n--- Starting Backtest ---")
     results_df = backtester.run()
-    print("--- Backtest Execution Complete ---")
+    print("--- Backtest Complete ---")
 
-    # 4. Analyze Results
+    # 5. Analyze Results
     print("\n--- Final Portfolio History (last 5 days) ---")
     print(results_df.tail())
     
-    # Plot the performance using the analytics module
     plot_pnl(results_df, title=f"{SPOT_SYMBOL} Delta Hedge Strategy Performance")
