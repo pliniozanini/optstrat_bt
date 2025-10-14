@@ -8,14 +8,6 @@ from .fixtures.mock_api_data import (
 )
 
 @pytest.fixture
-def mock_oplab_client():
-    mock_client = MagicMock()
-    mock_client.historical_options.return_value = pd.DataFrame(MOCK_OPTIONS_LIST['data'])
-    mock_client.historical_instruments_details.return_value = pd.DataFrame(MOCK_INSTRUMENTS_DETAILS['data'])
-    mock_client.historical_stock.return_value = pd.DataFrame(MOCK_STOCK_HISTORY['data'])
-    return mock_client
-
-@pytest.fixture
 def mock_oplab_client(monkeypatch):
     """
     This fixture provides a mock of the OplabClient.
@@ -28,19 +20,12 @@ def mock_oplab_client(monkeypatch):
     # Create a mock instance of the client
     class MockOplabClient:
         def historical_options(self, spot, date_str):
-            import pandas as pd
-            # Return empty DataFrame or sample data as needed
-            return pd.DataFrame({'ticker': []})
+            return pd.DataFrame(MOCK_OPTIONS_LIST['data'])
 
         def historical_instruments_details(self, tickers, date_str):
-            import pandas as pd
-            # Return empty DataFrame or sample data as needed
-            return pd.DataFrame()
+            return pd.DataFrame(MOCK_INSTRUMENTS_DETAILS['data'])
 
         def historical_stock(self, symbol, start_date, end_date):
-            import pandas as pd
-            # Return sample data
-            dates = pd.date_range(start_date, end_date, freq='B')
-            return pd.DataFrame({'date': dates})
+            return pd.DataFrame(MOCK_STOCK_HISTORY['data'])
     
     return MockOplabClient()
