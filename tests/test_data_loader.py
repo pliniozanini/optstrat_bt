@@ -2,12 +2,6 @@ import os
 import pandas as pd
 import pytest
 from unittest.mock import patch, MagicMock
-import sys
-from pathlib import Path
-
-# Add the src directory to the Python path
-src_dir = str(Path(__file__).parent.parent / 'src')
-sys.path.insert(0, src_dir)
 
 # Set test token before importing
 os.environ['OPLAB_ACCESS_TOKEN'] = 'test_token'
