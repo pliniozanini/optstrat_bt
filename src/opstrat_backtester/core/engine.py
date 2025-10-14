@@ -23,79 +23,69 @@ class Backtester:
         self.portfolio = Portfolio(initial_cash)
         self.cache_dir_path = Path(cache_dir) if cache_dir else None
         self.force_redownload = force_redownload
-        
+        self.data_source = None
+
+    def set_data_source(self, data_source):
+        """Set a custom data source for testing or alternative data providers."""
+        self.data_source = data_source
+
     def run(self) -> pd.DataFrame:
         """
         Runs the backtest simulation using memory-efficient data streaming.
         Implements pessimistic pricing: buy at next day's high, sell at next day's low.
         """
-        from ..data_loader import stream_options_data, stream_stock_data
+        if self.data_source is None:
+            from ..data_loader import OplabDataSource
+            self.data_source = OplabDataSource()
 
         print("Starting backtest using streaming data...")
-        options_stream = stream_options_data(
-            self.spot_symbol,
-            self.start_date.strftime('%Y-%m-%d'),
-            self.end_date.strftime('%Y-%m-%d'),
-            cache_dir=self.cache_dir_path,
-            force_redownload=self.force_redownload
+        options_stream = self.data_source.stream_options_data(
+            spot=self.spot_symbol,
+            start_date=self.start_date,
+            end_date=self.end_date
         )
 
-        stock_data = pd.concat(list(stream_stock_data(
-            self.spot_symbol,
-            self.start_date.strftime('%Y-%m-%d'),
-            self.end_date.strftime('%Y-%m-%d')
+        stock_data = pd.concat(list(self.data_source.stream_stock_data(
+            spot=self.spot_symbol,
+            start_date=self.start_date,
+            end_date=self.end_date
         )))
 
         for monthly_chunk in options_stream:
             dates_in_chunk = sorted(monthly_chunk['time'].dt.date.unique())
-
-            # Iterate with index to allow for lookahead to the next day
-            for i, current_date in enumerate(tqdm(dates_in_chunk, desc=f"Processing {dates_in_chunk[0].strftime('%Y-%m')}")):
-                # Stop before the last day in the chunk to avoid an index error
-                if i + 1 >= len(dates_in_chunk):
-                    continue
-
-                # 1. Get data for the current and next day
-                next_date = dates_in_chunk[i + 1]
-                options_for_day = monthly_chunk[monthly_chunk['time'].dt.date == current_date]
-                options_for_next_day = monthly_chunk[monthly_chunk['time'].dt.date == next_date]
+            
+            # Process each trading day
+            for i, date in enumerate(dates_in_chunk[:-1]):  # Skip last day for signals
+                current_options = monthly_chunk[monthly_chunk['time'].dt.date == date]
+                stock_slice = stock_data[stock_data['date'].dt.date <= date]
                 
-                # 2. Get stock history for signal generation
-                stock_history = stock_data[stock_data['date'].dt.date <= current_date]
-                
-                # 3. Mark portfolio to market
-                self.portfolio.mark_to_market(current_date, options_for_day)
-                
-                # 4. Generate signals using current day's data
+                # Get trading signals for the day
                 signals = self.strategy.generate_signals(
-                    current_date,
-                    options_for_day,
-                    stock_history,
-                    self.portfolio
+                    date=date,
+                    daily_options_data=current_options,
+                    stock_history=stock_slice,
+                    portfolio=self.portfolio
                 )
                 
-                # 5. Execute signals using next day's pessimistic prices
-                for trade in signals:
-                    try:
-                        if trade['quantity'] > 0:  # Buy order
-                            trade_price = options_for_next_day.loc[
-                                options_for_next_day['ticker'] == trade['ticker'], 'high'
-                            ].iloc[0]
-                        else:  # Sell order
-                            trade_price = options_for_next_day.loc[
-                                options_for_next_day['ticker'] == trade['ticker'], 'low'
-                            ].iloc[0]
+                # Execute signals on the next day at pessimistic prices
+                next_day = dates_in_chunk[i + 1]
+                next_day_data = monthly_chunk[monthly_chunk['time'].dt.date == next_day]
+                
+                for signal in signals:
+                    qty = signal['quantity']
+                    ticker = signal['ticker']
+                    
+                    # Find the ticker's data for tomorrow
+                    ticker_data = next_day_data[next_day_data['ticker'] == ticker]
+                    if ticker_data.empty:
+                        print(f"Warning: No data found for {ticker} on {next_day}")
+                        continue
+                        
+                    # Use high price for buys, low price for sells
+                    price = ticker_data['high'].iloc[0] if qty > 0 else ticker_data['low'].iloc[0]
+                    self.portfolio.add_trade(next_day, ticker, qty, price)
+                
+                # Update portfolio value using closing prices
+                self.portfolio.mark_to_market(date, next_day_data)
 
-                        # Execute the trade logged on the next day's date
-                        self.portfolio.add_trade(
-                            next_date,
-                            trade['ticker'],
-                            trade['quantity'],
-                            trade_price,
-                            trade.get('metadata', {})
-                        )
-                    except (KeyError, IndexError):
-                        print(f"Warning: Could not find next-day market data for {trade['ticker']} on {next_date}. Trade skipped.")
-
-        print("Backtest complete.")
         return pd.DataFrame(self.portfolio.history)
