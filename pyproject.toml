@@ -11,7 +11,9 @@ dependencies = [
     "pandas",
     "numpy",
     "matplotlib",
-    "tqdm"
+    "tqdm",
+    "requests",
+    "pyarrow"
 ]
 classifiers = [
     "Programming Language :: Python :: 3",
