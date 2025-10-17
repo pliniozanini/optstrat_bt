@@ -1,8 +1,3 @@
-You asked for the complete markdown content of the revised `README.md` file so you can directly copy and paste it.
-
-Here is the content:
-
-````markdown
 # opstrat_backtester
 
 [![PyPI Version](https://badge.fury.io/py/opstrat_backtester.svg)](https://badge.fury.io/py/opstrat_backtester)
