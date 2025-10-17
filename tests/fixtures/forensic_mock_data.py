@@ -28,5 +28,5 @@ MOCK_FORENSIC_OPTIONS_DATA = pd.DataFrame([
 
     # --- Day 4 (2024-01-05): Execution of the new call & Final MTM ---
     # Execution price for the call bought on Day 3 (pessimistic: high for buys)
-    {'time': pd.to_datetime('2024-01-05', utc=True), 'symbol': 'SPOTC105', 'type': 'CALL', 'strike': 105.0, 'expiry_date': '2024-02-15', 'close': 4.00, 'high': 4.20, 'low': 3.80}, # Buy executed at 4.20
+    {'time': pd.to_datetime('2024-01-05', utc=True), 'symbol': 'SPOTC105', 'type': 'CALL', 'strike': 105.0, 'expiry_date': '2024-02-15', 'close': 4.00, 'high': 4.20, 'low': 3.80} # Buy executed at 4.20
 ])

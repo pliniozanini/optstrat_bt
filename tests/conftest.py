@@ -1,31 +1,28 @@
 import pytest
-import pandas as pd
+import tempfile
+import shutil
 from unittest.mock import MagicMock
-from .fixtures.mock_api_data import (
-    MOCK_OPTIONS_LIST,
-    MOCK_INSTRUMENTS_DETAILS,
-    MOCK_STOCK_HISTORY
-)
 
 @pytest.fixture
-def mock_oplab_client(monkeypatch):
-    """
-    This fixture provides a mock of the OplabClient.
-    It patches the client at the source, so any code that imports and uses it
-    will get this mock instead of the real one during tests.
-    """
-    # Import OplabClient here to ensure the mock_env_token fixture is already applied
-    from opstrat_backtester.api_client import OplabClient
-    
-    # Create a mock instance of the client
-    class MockOplabClient:
-        def historical_options(self, spot, date_str):
-            return pd.DataFrame(MOCK_OPTIONS_LIST['data'])
+def mock_oplab_client():
+    """Provides a generic MagicMock of the OplabClient and ensures no cache interference."""
+    # Create an isolated temporary cache directory and clear in-memory cache
+    tmpdir = tempfile.mkdtemp(prefix="opstrat_test_cache_")
+    try:
+        with pytest.MonkeyPatch().context() as mp:
+            # Point the cache manager to an empty temporary directory
+            mp.setenv("OPSTRAT_CACHE_DIR", tmpdir)
+            # Clear any in-memory cache
+            try:
+                from opstrat_backtester import cache_manager
+                cache_manager.MEMORY_CACHE.clear()
+            except Exception:
+                pass
 
-        def historical_instruments_details(self, tickers, date_str):
-            return pd.DataFrame(MOCK_INSTRUMENTS_DETAILS['data'])
-
-        def historical_stock(self, symbol, start_date, end_date):
-            return pd.DataFrame(MOCK_STOCK_HISTORY['data'])
-    
-    return MockOplabClient()
+            # Provide a mock client instance and patch the constructor used in data_loader
+            mock_client_instance = MagicMock()
+            mp.setattr("opstrat_backtester.data_loader.OplabClient", lambda: mock_client_instance)
+            yield mock_client_instance
+    finally:
+        # Clean up temporary cache directory
+        shutil.rmtree(tmpdir, ignore_errors=True)

@@ -3,10 +3,10 @@ import pytest
 import pandas as pd
 from unittest.mock import MagicMock
 
-# --- Import Components from the Project ---
-from src.opstrat_backtester.core.engine import Backtester
-from src.opstrat_backtester.data.datasource import DataSource
-from src.opstrat_backtester.core.strategy import Strategy
+# --- CORRECTED IMPORTS ---
+from opstrat_backtester.core.engine import Backtester
+from opstrat_backtester.data.datasource import DataSource
+from opstrat_backtester.core.strategy import Strategy
 
 # --- Import Mock Data ---
 # This test assumes the mock data file exists at this location
