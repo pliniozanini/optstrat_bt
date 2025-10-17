@@ -3,8 +3,40 @@ import pandas as pd
 
 class Portfolio:
     """
-    Manages the state of the portfolio including cash, positions, and historical performance.
-    Supports rich metadata for both trades and positions.
+    A class representing a trading portfolio that manages positions, cash, and performance tracking.
+
+    The Portfolio class handles all aspects of position management, trade execution,
+    and portfolio valuation. It supports rich metadata for both trades and positions,
+    making it suitable for complex option strategies and multi-asset portfolios.
+
+    Parameters
+    ----------
+    initial_cash : float, optional
+        Initial cash balance in the portfolio. Default is 100,000.
+
+    Attributes
+    ----------
+    cash : float
+        Current cash balance in the portfolio
+    positions : dict
+        Dictionary of current positions with detailed metadata
+    history : list
+        Historical record of daily portfolio values
+    trades : list
+        Complete log of all executed trades with metadata
+
+    Examples
+    --------
+    >>> portfolio = Portfolio(initial_cash=100_000)
+    >>> portfolio.add_trade(
+    ...     trade_date=pd.Timestamp('2023-01-01'),
+    ...     ticker='AAPL',
+    ...     quantity=100,
+    ...     price=150.0,
+    ...     metadata={'type': 'stock'}
+    ... )
+    >>> portfolio.get_positions()
+    {'AAPL': {'quantity': 100, 'cost_basis': 150.0, 'metadata': {'type': 'stock'}}}
     """
     def __init__(self, initial_cash: float = 100_000):
         self.cash = initial_cash
@@ -21,14 +53,61 @@ class Portfolio:
         metadata: Dict[str, Any] = None
     ):
         """
-        Executes a trade and updates cash and positions.
+        Execute a trade and update the portfolio state.
+
+        This method processes a trade by updating the cash balance, position sizes,
+        cost basis, and maintaining detailed trade records with metadata. It supports
+        both simple stock trades and complex derivative trades with rich metadata.
+
+        Parameters
+        ----------
+        trade_date : pd.Timestamp
+            The timestamp when the trade occurs
+        ticker : str
+            The instrument identifier (e.g., stock symbol, option contract code)
+        quantity : int
+            Number of units to trade (positive for buy, negative for sell)
+        price : float
+            Execution price per unit
+        metadata : dict, optional
+            Additional trade information like:
+            - type: 'stock' or 'option'
+            - action: 'BUY', 'SELL'
+            - option_type: 'CALL' or 'PUT'
+            - strike: Strike price for options
+            - expiry_date: Option expiration date
+            - delta: Option delta
+            - hedged_stock_ticker: For delta hedging
+
+        Returns
+        -------
+        bool
+            True if the trade was successfully executed
+
+        Examples
+        --------
+        >>> # Simple stock trade
+        >>> portfolio.add_trade(
+        ...     pd.Timestamp('2023-01-01'),
+        ...     'AAPL',
+        ...     100,  # Buy 100 shares
+        ...     150.0,  # at $150 per share
+        ...     {'type': 'stock'}
+        ... )
         
-        Args:
-            trade_date: When the trade occurs
-            ticker: The instrument identifier
-            quantity: Number of units (+ve for buy, -ve for sell)
-            price: Execution price
-            metadata: Additional trade information (e.g., type, action, greeks)
+        >>> # Option trade with metadata
+        >>> portfolio.add_trade(
+        ...     pd.Timestamp('2023-01-01'),
+        ...     'AAPL230121C150',
+        ...     -1,  # Sell 1 contract
+        ...     5.0,  # at $5.00 premium
+        ...     {
+        ...         'type': 'option',
+        ...         'option_type': 'CALL',
+        ...         'strike': 150.0,
+        ...         'expiry_date': '2023-01-21'
+        ...     }
+        ... )
         """
         metadata = metadata or {}
         trade_cost = quantity * price
@@ -80,11 +159,32 @@ class Portfolio:
 
     def mark_to_market(self, date: pd.Timestamp, market_data: pd.DataFrame):
         """
-        Updates the market value of all open positions based on the day's closing prices.
-        
-        Args:
-            date: The date to mark positions to
-            market_data: DataFrame with current market prices
+        Mark the portfolio positions to market using closing prices.
+
+        This method calculates the current market value of all positions using 
+        provided market data and updates the portfolio's historical record. It 
+        handles missing market data gracefully by printing warnings.
+
+        Parameters
+        ----------
+        date : pd.Timestamp
+            The date to mark positions to
+        market_data : pd.DataFrame
+            DataFrame containing current market data with columns:
+            - ticker: Instrument identifier
+            - close: Closing price
+            Additional columns are ignored
+
+        Examples
+        --------
+        >>> market_data = pd.DataFrame({
+        ...     'ticker': ['AAPL', 'GOOGL'],
+        ...     'close': [150.0, 2800.0]
+        ... })
+        >>> portfolio.mark_to_market(
+        ...     pd.Timestamp('2023-01-01'),
+        ...     market_data
+        ... )
         """
         total_value = self.cash
         
@@ -106,15 +206,71 @@ class Portfolio:
         })
 
     def get_positions(self) -> dict:
-        """Returns the current state of all positions with their metadata."""
+        """
+        Get the current state of all positions.
+
+        Returns
+        -------
+        dict
+            Dictionary where keys are tickers and values are position details including:
+            - quantity: Current position size
+            - cost_basis: Average cost basis
+            - metadata: Additional position information (type, expiry, etc.)
+            - market_value: Most recent market value (if marked to market)
+            - last_price: Most recent price (if marked to market)
+
+        Examples
+        --------
+        >>> positions = portfolio.get_positions()
+        >>> for ticker, pos in positions.items():
+        ...     print(f"{ticker}: {pos['quantity']} @ {pos['cost_basis']}")
+        """
         return self.positions
 
     def get_trade_history(self) -> list:
-        """Returns the complete trade history with metadata."""
+        """
+        Get the complete history of all trades.
+
+        Returns
+        -------
+        list
+            List of dictionaries containing trade details including:
+            - date: Trade execution date
+            - ticker: Instrument identifier
+            - quantity: Trade size
+            - price: Execution price
+            - cost: Total trade cost
+            - metadata: Additional trade information
+
+        Examples
+        --------
+        >>> trades = portfolio.get_trade_history()
+        >>> for trade in trades:
+        ...     print(f"{trade['date']}: {trade['ticker']} x {trade['quantity']}")
+        """
         return self.trades
 
     def get_position_type(self, ticker: str) -> str:
-        """Helper to get the type of a position (e.g., 'option', 'stock')"""
+        """
+        Get the type of a specific position.
+
+        Parameters
+        ----------
+        ticker : str
+            The instrument identifier to check
+
+        Returns
+        -------
+        str or None
+            The position type ('stock', 'option', etc.) or None if position not found
+
+        Examples
+        --------
+        >>> portfolio.get_position_type('AAPL')
+        'stock'
+        >>> portfolio.get_position_type('AAPL230121C150')
+        'option'
+        """
         if ticker in self.positions:
             return self.positions[ticker]['metadata'].get('type', 'stock')
         return None

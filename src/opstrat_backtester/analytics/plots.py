@@ -3,11 +3,35 @@ import matplotlib.pyplot as plt
 
 def plot_pnl(results_df: pd.DataFrame, title: str = 'Portfolio Performance'):
     """
-    Plots the portfolio value over time.
+    Plot the portfolio value over time using matplotlib.
 
-    Args:
-        results_df: The DataFrame returned by the Backtester's run() method.
-                    It must contain 'date' and 'portfolio_value' columns.
+    Creates a line plot showing the evolution of the portfolio value throughout
+    the backtesting period. The plot includes a grid and basic formatting.
+
+    Parameters
+    ----------
+    results_df : pd.DataFrame
+        Backtesting results DataFrame containing:
+        - date: Trading dates
+        - portfolio_value: Daily portfolio values
+    title : str, optional
+        Plot title. Default is 'Portfolio Performance'
+
+    Raises
+    ------
+    ValueError
+        If required columns are missing from results_df
+
+    Examples
+    --------
+    >>> results = backtester.run()
+    >>> plot_pnl(results, title='My Strategy Performance')
+
+    Notes
+    -----
+    This function uses matplotlib's pyplot interface and will display
+    the plot immediately in Jupyter notebooks or create a new figure window
+    in scripts.
     """
     if 'date' not in results_df.columns or 'portfolio_value' not in results_df.columns:
         raise ValueError("Results DataFrame must contain 'date' and 'portfolio_value' columns.")
