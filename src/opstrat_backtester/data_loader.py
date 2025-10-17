@@ -34,8 +34,8 @@ class OplabDataSource(DataSource):
             else pd.to_datetime(end_date)
         )
         # Create a date range for the months to be processed
-        months_to_process = pd.date_range(start=start.to_period('M').start_time.tz_localize('UTC'), end=end, freq='MS')
-
+        months_to_process = pd.date_range(start=start.replace(day=1), end=end, freq='MS')
+        
         today = pd.Timestamp.now(tz='UTC').normalize()
 
         print(f"Streaming data for {spot} from {start_date} to {end_date}")
@@ -98,8 +98,8 @@ class OplabDataSource(DataSource):
                 if not details_df.empty:
                     details_dfs.append(details_df)
             details_dfs = pd.concat(details_dfs) if details_dfs else pd.DataFrame()
-            details_dfs['time'] = pd.to_datetime(details_dfs['time'])
             if not details_dfs.empty:
+                details_dfs['time'] = pd.to_datetime(details_dfs['time'])
                 # Merge the details back into the monthly options data on 'symbol'/'ticker' and 'date'
                 monthly_df = monthly_df.merge(details_dfs, how='left', on=['symbol', 'time'],suffixes=('', '_detail'))
                 # Drop redundant columns if any
