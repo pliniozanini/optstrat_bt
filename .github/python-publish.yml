@@ -1,0 +1,73 @@
+# .github/workflows/python-publish.yml
+
+name: Python Package CI/CD
+
+# Controls when the workflow will run
+on:
+  push:
+    branches: [ main ] # Run on every push to the main branch
+  pull_request:
+    branches: [ main ] # Run on pull requests targeting the main branch
+
+jobs:
+  build-and-test:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12"] # Test on multiple Python versions
+
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - uses: actions/checkout@v3
+
+      # Sets up the specified Python version
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # Installs dependencies, including your package in editable mode and dev dependencies
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev]
+
+      # (Optional) Add a step for linting with a tool like Ruff or Flake8
+      # - name: Lint with Ruff
+      #   run: |
+      #     pip install ruff
+      #     ruff check .
+
+      # Runs your tests with pytest
+      - name: Run tests
+        run: |
+          pytest
+
+  publish-to-pypi:
+    # This job only runs when you create a new release on GitHub
+    needs: build-and-test # It will only run if the build-and-test job succeeds
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags')
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install build
+
+      - name: Build package
+        run: python -m build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@v1.5.0
+        with:
+          user: __token__
+          password: ${{ secrets.PYPI_API_TOKEN }}
