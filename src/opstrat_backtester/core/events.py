@@ -4,26 +4,118 @@ from .portfolio import Portfolio
 
 class EventHandler(ABC):
     """
-    Abstract Base Class for an event handler.
-    Event handlers are processed by the backtester at the start of each day
-    to simulate market events like expirations, dividends, etc.
+    Abstract base class for processing market events in the backtester.
+
+    Event handlers are responsible for simulating market events that affect
+    the portfolio state, such as option expirations, stock splits, dividends,
+    and corporate actions. The backtester processes all registered event
+    handlers at the start of each trading day.
+
+    To implement a custom event handler:
+    1. Subclass EventHandler
+    2. Implement the handle() method
+    3. Register the handler with the backtester
+
+    Examples
+    --------
+    >>> class DividendHandler(EventHandler):
+    ...     def handle(self, current_date, portfolio, market_data, stock_data):
+    ...         # Check for dividend events
+    ...         dividend_events = get_dividends(current_date)
+    ...         for event in dividend_events:
+    ...             # Adjust portfolio cash and stock prices
+    ...             portfolio.cash += event['amount'] * portfolio.positions[event['ticker']]['quantity']
+    
+    >>> # Register with backtester
+    >>> handlers = [OptionExpirationHandler(), DividendHandler()]
+    >>> backtester = Backtester(
+    ...     spot_symbol='AAPL',
+    ...     strategy=strategy,
+    ...     event_handlers=handlers,
+    ...     start_date='2023-01-01',
+    ...     end_date='2023-12-31'
+    ... )
+
+    See Also
+    --------
+    OptionExpirationHandler : Concrete handler for option expirations
+    Backtester : Main backtesting engine class
+    Portfolio : Portfolio management class
     """
     @abstractmethod
     def handle(self, current_date: pd.Timestamp, portfolio: Portfolio, market_data: pd.DataFrame, stock_data: pd.DataFrame):
         """
-        The core logic of the event handler.
+        Process market events for the current simulation day.
 
-        Args:
-            current_date: The current date of the simulation.
-            portfolio: The portfolio object to be modified.
-            market_data: Options data for the current day.
-            stock_data: Stock data up to the current day.
+        This method is called by the backtester at the start of each trading
+        day. Implementations should check for relevant market events and
+        update the portfolio state accordingly.
+
+        Parameters
+        ----------
+        current_date : pd.Timestamp
+            The current date in the simulation
+        portfolio : Portfolio
+            The portfolio object that can be modified to reflect event impacts
+        market_data : pd.DataFrame
+            Options market data for the current day containing:
+            - symbol: Option contract identifier
+            - type: Option type ('CALL' or 'PUT')
+            - strike: Strike price
+            - expiry_date: Expiration date
+            Additional fields may be available
+        stock_data : pd.DataFrame
+            Stock market data up to the current day with:
+            - date: Trading date
+            - open, high, low, close: Price data
+            - volume: Trading volume
+            Additional fields may be available
+
+        Returns
+        -------
+        None
+            The portfolio object is modified in place
+
+        Notes
+        -----
+        Common market events to handle:
+        - Option expirations and exercises
+        - Stock splits and reverse splits
+        - Cash and stock dividends
+        - Mergers and acquisitions
+        - Trading halts
         """
         pass
 
 class OptionExpirationHandler(EventHandler):
     """
-    A concrete event handler for processing option expirations.
+    Event handler for processing option expirations.
+
+    This handler checks for any option positions that expire on the current
+    date and processes them according to their intrinsic value:
+    - In-the-money options are exercised at their intrinsic value
+    - Out-of-the-money options expire worthless
+
+    The handler updates the portfolio by:
+    1. Identifying expiring options
+    2. Calculating their intrinsic value
+    3. Closing the positions with appropriate P&L
+
+    Examples
+    --------
+    >>> handler = OptionExpirationHandler()
+    >>> handler.handle(
+    ...     current_date=pd.Timestamp('2023-01-21'),
+    ...     portfolio=portfolio,
+    ...     market_data=options_data,
+    ...     stock_data=stock_data
+    ... )
+
+    Notes
+    -----
+    - Call option intrinsic value = max(0, stock_price - strike)
+    - Put option intrinsic value = max(0, strike - stock_price)
+    - The handler logs expiration events for transparency
     """
     def handle(self, current_date: pd.Timestamp, portfolio: Portfolio, market_data: pd.DataFrame, stock_data: pd.DataFrame):
         # This robustly gets the stock price for the specific day needed.

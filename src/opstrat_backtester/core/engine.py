@@ -8,13 +8,73 @@ from ..data.datasource import DataSource
 
 class Backtester:
     """
-    A modular, event-driven backtesting engine for options strategies.
+    A comprehensive, event-driven backtesting engine for options trading strategies.
 
-    This engine processes each day of a simulation in a clear, sequential order:
-    1. Executes trades based on signals from the previous day.
-    2. Handles market events for the current day (e.g., option expirations).
-    3. Values the portfolio (Mark-to-Market).
-    4. Calls the user-defined strategy to generate new signals for the next day.
+    The Backtester class provides a robust framework for simulating trading strategies
+    with support for both stocks and options. It processes each day of the simulation
+    in a clear, sequential order:
+
+    1. Execute trades based on signals from the previous day
+    2. Handle market events (e.g., option expirations)
+    3. Mark portfolio to market
+    4. Call strategy to generate new signals
+
+    Parameters
+    ----------
+    spot_symbol : str
+        The underlying stock symbol (e.g., 'AAPL')
+    strategy : Strategy
+        Instance of a Strategy subclass defining the trading logic
+    start_date : str
+        Simulation start date in 'YYYY-MM-DD' format
+    end_date : str
+        Simulation end date in 'YYYY-MM-DD' format
+    initial_cash : float, optional
+        Starting cash balance. Default is 100,000
+    event_handlers : list of EventHandler, optional
+        List of event handlers for processing market events.
+        Default is [OptionExpirationHandler()]
+
+    Attributes
+    ----------
+    portfolio : Portfolio
+        The portfolio being managed in the simulation
+    data_source : DataSource
+        Source of market data for the simulation
+    trade_log : list
+        Detailed log of all executed trades
+    daily_history : list
+        Daily record of portfolio state and market data
+
+    Examples
+    --------
+    >>> from my_strategy import MyStrategy
+    >>> from opstrat_backtester.data_loader import MockDataSource
+    
+    >>> # Initialize components
+    >>> strategy = MyStrategy()
+    >>> backtester = Backtester(
+    ...     spot_symbol='AAPL',
+    ...     strategy=strategy,
+    ...     start_date='2023-01-01',
+    ...     end_date='2023-12-31'
+    ... )
+    >>> backtester.set_data_source(MockDataSource())
+    
+    >>> # Run backtest
+    >>> results = backtester.run()
+    
+    Notes
+    -----
+    The backtester expects options data in a standardized format with required
+    fields like symbol, type (CALL/PUT), strike, expiry_date, and pricing data.
+    Similarly, stock data should include OHLCV fields.
+
+    See Also
+    --------
+    Strategy : Abstract base class for implementing trading strategies
+    Portfolio : Class for managing positions and tracking performance
+    EventHandler : Base class for implementing market event handlers
     """
     def __init__(
         self,
@@ -37,11 +97,42 @@ class Backtester:
         self.daily_history: List[Dict[str, Any]] = []
 
     def set_data_source(self, data_source: DataSource):
-        """Assigns a data source to the backtester."""
+        """
+        Set the data source for market data.
+
+        Parameters
+        ----------
+        data_source : DataSource
+            An instance of DataSource or its subclasses that provides
+            methods for streaming options and stock market data
+
+        Examples
+        --------
+        >>> backtester.set_data_source(MockDataSource())
+        >>> backtester.set_data_source(OplabDataSource(access_token='...'))
+        """
         self.data_source = data_source
 
     def _setup_data_streams(self):
-        """Loads and prepares the necessary options and stock data streams."""
+        """
+        Initialize and prepare the market data streams.
+
+        This internal method sets up both the options and stock data streams
+        needed for the simulation. It validates that a data source has been
+        set and handles the initial data loading.
+
+        Returns
+        -------
+        tuple
+            (options_stream, stock_data) where:
+            - options_stream: Generator yielding daily options data
+            - stock_data: DataFrame of historical stock data
+
+        Raises
+        ------
+        ValueError
+            If no data source has been set
+        """
         if self.data_source is None:
             raise ValueError("Data source has not been set. Call set_data_source() before run().")
         
@@ -54,7 +145,31 @@ class Backtester:
         return options_stream, stock_data
 
     def _execute_trades(self, date: pd.Timestamp, signals: List[Dict], current_options: pd.DataFrame, decision_options: pd.DataFrame):
-        """Executes trades based on signals from the previous day."""
+        """
+        Execute pending trades from previously generated signals.
+
+        This internal method processes trading signals by looking up current
+        market prices and creating trades in the portfolio. It includes logic
+        for trade execution prices and metadata enrichment.
+
+        Parameters
+        ----------
+        date : pd.Timestamp
+            Current simulation date
+        signals : list of dict
+            Trading signals from strategy
+        current_options : pd.DataFrame
+            Current day's options market data
+        decision_options : pd.DataFrame
+            Previous day's options data when signals were generated
+
+        Notes
+        -----
+        The method assumes:
+        - Buy orders execute at the high price
+        - Sell orders execute at the low price
+        - Trade metadata is enriched from the decision day's data
+        """
         for signal in signals:
             ticker, qty = signal['ticker'], signal['quantity']
             execution_data = current_options[current_options['symbol'] == ticker]
@@ -76,13 +191,61 @@ class Backtester:
             self.portfolio.add_trade(date, ticker, qty, price, metadata=trade_metadata)
 
     def _handle_events(self, date: pd.Timestamp, current_options: pd.DataFrame, stock_slice: pd.DataFrame):
-        """Processes daily market events, such as expirations."""
+        """
+        Process all registered market events for the current day.
+
+        This internal method invokes each registered event handler in sequence.
+        Event handlers may modify the portfolio state (e.g., process option
+        expirations, apply corporate actions).
+
+        Parameters
+        ----------
+        date : pd.Timestamp
+            Current simulation date
+        current_options : pd.DataFrame
+            Current day's options market data
+        stock_slice : pd.DataFrame
+            Current day's stock market data
+
+        Notes
+        -----
+        Event handlers are processed in the order they were registered.
+        Common events include:
+        - Option expirations
+        - Stock splits
+        - Dividends
+        """
         if self.event_handlers:
             for handler in self.event_handlers:
                 handler.handle(date, self.portfolio, current_options, stock_slice)
 
     def _log_daily_history(self, date: pd.Timestamp, signals: List[Dict], custom_indicators: Dict, decision_options: pd.DataFrame):
-        """Records the state of the portfolio at the end of the day."""
+        """
+        Record daily portfolio state and custom metrics.
+
+        This internal method maintains a historical record of portfolio value,
+        cash balance, pending signals, and any custom indicators calculated
+        by the strategy.
+
+        Parameters
+        ----------
+        date : pd.Timestamp
+            Current simulation date
+        signals : list of dict
+            Trading signals generated for the next day
+        custom_indicators : dict
+            Strategy-specific metrics to record
+        decision_options : pd.DataFrame
+            Options data used for signal generation
+
+        Notes
+        -----
+        The daily history is used to:
+        - Generate performance analytics
+        - Plot portfolio value over time
+        - Analyze strategy behavior
+        - Calculate risk metrics
+        """
         if not self.portfolio.history:
              # If no history yet, portfolio value is just cash
             portfolio_value = self.portfolio.cash
