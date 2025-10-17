@@ -26,16 +26,16 @@ class OptionExpirationHandler(EventHandler):
     A concrete event handler for processing option expirations.
     """
     def handle(self, current_date: pd.Timestamp, portfolio: Portfolio, market_data: pd.DataFrame, stock_data: pd.DataFrame):
-        if stock_data.empty:
-            return # Cannot process expirations without the underlying's price
+        # This robustly gets the stock price for the specific day needed.
+        stock_price_row = stock_data[stock_data['date'].dt.date == current_date.date()]
+        if stock_price_row.empty:
+            # Silently return; no action can be taken without the stock price.
+            return
+        current_stock_price = stock_price_row.iloc[0]['close']
 
-        current_stock_price = stock_data.iloc[-1]['close']
         positions_to_check = list(portfolio.get_positions().keys())
-
         for ticker in positions_to_check:
             position = portfolio.get_positions().get(ticker)
-            
-            # Skip non-option positions or those without metadata
             if not position or position['metadata'].get('type') != 'option':
                 continue
             
@@ -43,26 +43,23 @@ class OptionExpirationHandler(EventHandler):
             if not expiry_date_str:
                 continue
 
-            expiry_date = pd.to_datetime(expiry_date_str, utc=True).date()
-
-            if expiry_date == current_date.date():
+            expiry_ts = pd.to_datetime(expiry_date_str, utc=True)
+            
+            # This comparison is now reliable.
+            if expiry_ts.date() == current_date.date():
+                print(f"INFO [{current_date.date()}]: Option {ticker} has expired. Processing exercise...")
                 strike = position['metadata'].get('strike', 0)
                 opt_type = position['metadata'].get('option_type', '')
                 qty = position['quantity']
                 
                 intrinsic_value = 0
-                if opt_type == 'Call':
+                if opt_type == 'CALL':
                     intrinsic_value = max(0, current_stock_price - strike)
-                elif opt_type == 'Put':
+                elif opt_type == 'PUT':
                     intrinsic_value = max(0, strike - current_stock_price)
 
                 action = 'EXPIRE_OTM' if intrinsic_value == 0 else 'EXERCISE_ITM'
-                price = intrinsic_value
-
                 portfolio.add_trade(
-                    trade_date=current_date,
-                    ticker=ticker,
-                    quantity=-qty, # Close the position
-                    price=price,
-                    metadata={'action': action}
+                    trade_date=current_date, ticker=ticker, quantity=-qty,
+                    price=intrinsic_value, metadata={'action': action}
                 )

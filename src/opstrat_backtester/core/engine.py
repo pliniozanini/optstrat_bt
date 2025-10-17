@@ -1,13 +1,21 @@
 import pandas as pd
 from tqdm import tqdm
 from typing import Optional, List, Dict, Any, Tuple
-from pathlib import Path
 from .strategy import Strategy
 from .portfolio import Portfolio
 from .events import EventHandler, OptionExpirationHandler
-
+from ..data.datasource import DataSource
 
 class Backtester:
+    """
+    A modular, event-driven backtesting engine for options strategies.
+
+    This engine processes each day of a simulation in a clear, sequential order:
+    1. Executes trades based on signals from the previous day.
+    2. Handles market events for the current day (e.g., option expirations).
+    3. Values the portfolio (Mark-to-Market).
+    4. Calls the user-defined strategy to generate new signals for the next day.
+    """
     def __init__(
         self,
         spot_symbol: str,
@@ -15,137 +23,121 @@ class Backtester:
         start_date: str,
         end_date: str,
         initial_cash: float = 100_000,
-        cache_dir: Optional[str] = None,
-        force_redownload: bool = False,
         event_handlers: Optional[List[EventHandler]] = None
     ):
         self.spot_symbol = spot_symbol
         self.strategy = strategy
         self.start_date = pd.to_datetime(start_date, utc=True)
         self.end_date = pd.to_datetime(end_date, utc=True)
-        # Use your provided Portfolio class
         self.portfolio = Portfolio(initial_cash)
-        self.cache_dir_path = Path(cache_dir) if cache_dir else None
-        self.force_redownload = force_redownload
-        self.data_source = None
-        
-        # If no handlers are provided, default to the option expiration handler
+        self.data_source: Optional[DataSource] = None
         self.event_handlers = event_handlers or [OptionExpirationHandler()]
         
         self.trade_log: List[Dict[str, Any]] = []
         self.daily_history: List[Dict[str, Any]] = []
 
-    def set_data_source(self, data_source):
+    def set_data_source(self, data_source: DataSource):
+        """Assigns a data source to the backtester."""
         self.data_source = data_source
 
-    def _prefix_dict_keys(self, d: Dict[str, Any], prefix: str) -> Dict[str, Any]:
-        return {f"{prefix}_{key}": val for key, val in d.items()}
-
-    def run(self) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    def _setup_data_streams(self):
+        """Loads and prepares the necessary options and stock data streams."""
         if self.data_source is None:
-            # from ..data_loader import OplabDataSource
-            # self.data_source = OplabDataSource()
             raise ValueError("Data source has not been set. Call set_data_source() before run().")
-
-        print("Starting backtest...")
+        
         options_stream = self.data_source.stream_options_data(
-            spot=self.spot_symbol,
-            start_date=self.start_date,
-            end_date=self.end_date
+            spot=self.spot_symbol, start_date=self.start_date, end_date=self.end_date
         )
-
         stock_data = pd.concat(list(self.data_source.stream_stock_data(
-            symbol=self.spot_symbol,
-            start_date=self.start_date,
-            end_date=self.end_date
+            symbol=self.spot_symbol, start_date=self.start_date, end_date=self.end_date
         )))
+        return options_stream, stock_data
 
-        for monthly_chunk in options_stream:
-            print(f"Processing chunk: {monthly_chunk['time'].min().date()} to {monthly_chunk['time'].max().date()}")
-            dates_in_chunk = sorted(pd.to_datetime(monthly_chunk['time'].dt.date.unique(), utc=True))
+    def _execute_trades(self, date: pd.Timestamp, signals: List[Dict], current_options: pd.DataFrame, decision_options: pd.DataFrame):
+        """Executes trades based on signals from the previous day."""
+        for signal in signals:
+            ticker, qty = signal['ticker'], signal['quantity']
+            execution_data = current_options[current_options['symbol'] == ticker]
             
-            for i, date in enumerate(tqdm(dates_in_chunk[:-1], desc="Processing days")):
-                next_day = dates_in_chunk[i + 1]
+            if execution_data.empty:
+                continue
+
+            price = execution_data['high'].iloc[0] if qty > 0 else execution_data['low'].iloc[0]
+            
+            # Retrieve original option data to enrich metadata
+            decision_row = decision_options[decision_options['symbol'] == ticker].iloc[0]
+            trade_metadata = {
+                'type': 'option',
+                'option_type': decision_row.get('type'),
+                'expiry_date': decision_row.get('expiry_date'),
+                'strike': decision_row.get('strike'),
+                'action': 'BUY' if qty > 0 else 'SELL'
+            }
+            self.portfolio.add_trade(date, ticker, qty, price, metadata=trade_metadata)
+
+    def _handle_events(self, date: pd.Timestamp, current_options: pd.DataFrame, stock_slice: pd.DataFrame):
+        """Processes daily market events, such as expirations."""
+        if self.event_handlers:
+            for handler in self.event_handlers:
+                handler.handle(date, self.portfolio, current_options, stock_slice)
+
+    def _log_daily_history(self, date: pd.Timestamp, signals: List[Dict], custom_indicators: Dict, decision_options: pd.DataFrame):
+        """Records the state of the portfolio at the end of the day."""
+        if not self.portfolio.history:
+             # If no history yet, portfolio value is just cash
+            portfolio_value = self.portfolio.cash
+            cash_value = self.portfolio.cash
+        else:
+            last_summary = self.portfolio.history[-1]
+            portfolio_value = last_summary.get('portfolio_value')
+            cash_value = last_summary.get('cash')
+
+        self.daily_history.append({
+            'date': date,
+            'portfolio_value': portfolio_value,
+            'cash': cash_value,
+            'signals': signals,  # Store signals for the next day's execution
+            'decision_options': decision_options, # Store option data for metadata enrichment
+            **custom_indicators
+        })
+    
+    def run(self) -> Tuple[pd.DataFrame, pd.DataFrame]:
+        """
+        Orchestrates the backtest, running the simulation day by day.
+        """
+        options_stream, stock_data = self._setup_data_streams()
+        
+        for monthly_chunk in options_stream:
+            dates_in_chunk = sorted(pd.to_datetime(monthly_chunk['time'].dt.date.unique(), utc=True))
+
+            for date in tqdm(dates_in_chunk, desc="Processing days"):
+                if date > self.end_date:
+                    break
+
                 current_options = monthly_chunk[monthly_chunk['time'].dt.date == date.date()]
-                next_day_options = monthly_chunk[monthly_chunk['time'].dt.date == next_day.date()]
                 stock_slice = stock_data[stock_data['date'].dt.date <= date.date()]
-
-                # Process event handlers
-                if self.event_handlers:
-                    for handler in self.event_handlers:
-                        handler.handle(date, self.portfolio, current_options, stock_slice)
-
-                signals_output = self.strategy.generate_signals(
+                
+                # Retrieve signals generated on the previous day
+                signals_to_execute = self.daily_history[-1].get('signals', []) if self.daily_history else []
+                decision_options = self.daily_history[-1].get('decision_options', pd.DataFrame()) if self.daily_history else pd.DataFrame()
+                
+                # --- Daily Stages ---
+                self._execute_trades(date, signals_to_execute, current_options, decision_options)
+                self._handle_events(date, current_options, stock_slice)
+                self.portfolio.mark_to_market(date, current_options.rename(columns={'symbol': 'ticker'}))
+                
+                # This stage preserves the original, user-facing strategy interface
+                new_signals, custom_indicators = self.strategy.generate_signals(
                     date=date,
                     daily_options_data=current_options,
                     stock_history=stock_slice,
                     portfolio=self.portfolio
                 )
                 
-                if isinstance(signals_output, tuple) and len(signals_output) == 2:
-                    signals, custom_indicators = signals_output
-                else:
-                    signals, custom_indicators = signals_output, {}
+                self._log_daily_history(date, new_signals, custom_indicators, current_options)
 
-                for signal in signals:
-                    ticker, qty = signal['ticker'], signal['quantity']
-                    log_record = {'decision_date': date, 'execution_date': next_day, 'ticker': ticker, 'signal_quantity': qty}
-                    
-                    decision_data = current_options[current_options['symbol'] == ticker]
-                    if not decision_data.empty:
-                        log_record.update(self._prefix_dict_keys(decision_data.iloc[0].to_dict(), 'decision'))
-
-                    execution_data = next_day_options[next_day_options['symbol'] == ticker]
-                    if execution_data.empty:
-                        log_record['trade_status'] = 'FAILED_NO_DATA'
-                    else:
-                        price = execution_data['high'].iloc[0] if qty > 0 else execution_data['low'].iloc[0]
-                        
-                        ## --- CHANGE 1: Call add_trade with metadata --- ##
-                        # Your Portfolio class accepts metadata, so we provide it.
-                        trade_metadata = {'action': 'BUY' if qty > 0 else 'SELL'}
-                        self.portfolio.add_trade(next_day, ticker, qty, price, metadata=trade_metadata)
-                        
-                        log_record['trade_status'] = 'EXECUTED'
-                        log_record['execution_price'] = price
-                        log_record.update(self._prefix_dict_keys(execution_data.iloc[0].to_dict(), 'execution'))
-                    
-                    log_record.update(custom_indicators)
-                    self.trade_log.append(log_record)
-
-                ## --- CHANGE 2: Prepare data for mark_to_market --- ##
-                # Your Portfolio class expects a 'ticker' column, not 'symbol'.
-                market_data_for_mtm = next_day_options.rename(columns={'symbol': 'ticker'})
-                # Use next_day here so the portfolio is marked-to-market on the day
-                # the prices are from (execution/next trading day). This aligns the
-                # portfolio.history dates with the actual valuation date.
-                self.portfolio.mark_to_market(next_day, market_data_for_mtm)
-                
-                ## --- CHANGE 3: Get values from portfolio history --- ##
-                # Instead of calling non-existent methods, we get the latest value
-                # calculated by the mark_to_market method above.
-                if self.portfolio.history:
-                    last_day_summary = self.portfolio.history[-1]
-                    portfolio_value = last_day_summary.get('portfolio_value', 0)
-                    cash_value = last_day_summary.get('cash', 0)
-                    positions_value = portfolio_value - cash_value
-                else: # Fallback for the very first day
-                    portfolio_value = self.portfolio.cash
-                    cash_value = self.portfolio.cash
-                    positions_value = 0
-                
-                daily_record = {
-                    # Record the valuation under the date the valuation occurred
-                    # (next_day) so daily P&L aligns with execution/pricing date.
-                    'date': next_day,
-                    'portfolio_value': portfolio_value,
-                    'cash': cash_value,
-                    'positions_value': positions_value,
-                }
-                daily_record.update(custom_indicators)
-                self.daily_history.append(daily_record)
-
-        trades_df = pd.DataFrame(self.trade_log)
-        daily_summary_df = pd.DataFrame(self.daily_history)
+        # Prepare final output
+        final_summary = pd.DataFrame([h for h in self.daily_history if 'portfolio_value' in h])
+        final_trades = pd.DataFrame(self.portfolio.get_trade_history())
         
-        return daily_summary_df, trades_df
+        return final_summary, final_trades
