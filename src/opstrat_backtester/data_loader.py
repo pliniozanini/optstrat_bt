@@ -134,6 +134,8 @@ class OplabDataSource(DataSource):
         )
         print(f"Streaming stock data for {symbol} from {start_date} to {end_date}")
 
+        today = pd.Timestamp.now(tz='UTC').normalize()
+
         for year in range(start.year, end.year + 1):
             print(f"Processing stock data for year {year}...")
             year_start = max(start, pd.Timestamp(f"{year}-01-01").tz_localize('UTC'))
@@ -144,35 +146,45 @@ class OplabDataSource(DataSource):
                 year_end = min(year_end, today)
             period_str = f"{year}"
             cache_key = generate_key(data_type="stock", symbol=symbol, period=period_str)
+            is_current_year = (year == today.year)
 
             year_data = get_from_cache(cache_key, cache_dir) if not force_redownload else None
             if year_data is not None and not year_data.empty:
                 if year_data['date'].dt.tz is None:
                     year_data['date'] = year_data['date'].dt.tz_localize('UTC')
             
-            # Check if cached data contains full year range
-            if year_data is not None and not year_data.empty:
-                if year_data['date'].min() > year_start or year_data['date'].max() < year_end:
-                    print(f"Cache miss for stock data {cache_key}. Fetching from API...")
-                    year_data = None  # Invalidate cache if it doesn't cover the full year range
+            # For the current year, check if the cache is stale (e.g., ends before today)
+            if year_data is not None and not year_data.empty and is_current_year:
+                # If cache max date is before yesterday, it's stale.
+                if year_data['date'].max() < (today - pd.Timedelta(days=1)):
+                    print(f"Cache for current year {year} is stale. Refetching...")
+                    year_data = None
 
             if year_data is None:
-                print(f"Cache miss for stock data {cache_key}. Fetching from API...")
-                year_data = self.api_client.historical_stock(symbol, year_start.strftime('%Y-%m-%d'), year_end.strftime('%Y-%m-%d'))
-                if not year_data.empty:
+                print(f"Cache miss for stock data {cache_key}. Fetching full year from API...")
+                
+                # Always fetch the *full* year to populate the cache properly.
+                fetch_start_str = f"{year}-01-01"
+                
+                if is_current_year:
+                    # For current year, fetch up to today
+                    fetch_end_str = today.strftime('%Y-%m-%d')
+                else:
+                    # For past years, fetch the full year
+                    fetch_end_str = f"{year}-12-31"
+
+                year_data = self.api_client.historical_stock(symbol, fetch_start_str, fetch_end_str)
+
+            if not year_data.empty:
                     year_data['date'] = pd.to_datetime(year_data['date'], utc=True)
+                    # Always cache the result
                     set_to_cache(cache_key, year_data, cache_dir)
 
             if year_data is not None and not year_data.empty:
-                # breakpoint()
-                # print(f'year data starts in {year_data["date"].min()} and ends in {year_data["date"].max()}')
-                # print(start, end)
+                # This filter logic is perfect and remains unchanged.
+                # It correctly slices the full-year data to what the user asked for.
                 mask = (year_data['date'] >= start) & (year_data['date'] <= end)
-                # print((year_data['date'] >= start).sum(), (year_data['date'] <= end).sum())
-                # print(f"Mask from {year_start} to {year_end} yields {mask} records.")
                 filtered_data = year_data.loc[mask]
-                # print(f"Yielding {len(filtered_data)} records for year {year}, with date range"
-                #       f" {filtered_data['date'].min()} to {filtered_data['date'].max()}")
 
                 if not filtered_data.empty:
                     yield filtered_data
