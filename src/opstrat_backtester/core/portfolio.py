@@ -148,7 +148,7 @@ class Portfolio:
         # Update position metadata
         position['metadata'].update({
             k: v for k, v in metadata.items() 
-            if k in ['type', 'expiry_date', 'strike', 'option_type', 'delta', 'hedged_stock_ticker']
+            if k in ['type', 'due_date', 'strike', 'option_type', 'delta', 'hedged_stock_ticker']
         })
         
         # Remove position if closed

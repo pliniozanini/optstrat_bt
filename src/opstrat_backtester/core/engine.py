@@ -181,12 +181,13 @@ class Backtester:
             
             # Retrieve original option data to enrich metadata
             decision_row = decision_options[decision_options['symbol'] == ticker].iloc[0]
+            action = 'BUY' if qty > 0 else 'SELL'
             trade_metadata = {
                 'type': 'option',
                 'option_type': decision_row.get('type'),
-                'expiry_date': decision_row.get('expiry_date'),
+                'due_date': decision_row.get('due_date'),
                 'strike': decision_row.get('strike'),
-                'action': 'BUY' if qty > 0 else 'SELL'
+                'action': action
             }
             self.portfolio.add_trade(date, ticker, qty, price, metadata=trade_metadata)
 
