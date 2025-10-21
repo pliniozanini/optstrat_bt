@@ -6,12 +6,12 @@ MOCK_OPTIONS_LIST = {
     "data": [
         {
             "symbol": "PETRA110", "type": "CALL", "strike": 11.00,
-            "expiry_date": "2024-01-19", "time": "2023-11-10",
+            "due_date": "2024-01-19", "time": "2023-11-10",
             "high": 0.55, "low": 0.48, "close": 0.52
         },
         {
             "symbol": "PETRM110", "type": "PUT", "strike": 11.00,
-            "expiry_date": "2024-01-19", "time": "2023-11-10",
+            "due_date": "2024-01-19", "time": "2023-11-10",
             "high": 0.25, "low": 0.18, "close": 0.21
         }
     ]

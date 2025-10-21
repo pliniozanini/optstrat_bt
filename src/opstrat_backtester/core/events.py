@@ -131,7 +131,7 @@ class OptionExpirationHandler(EventHandler):
             if not position or position['metadata'].get('type') != 'option':
                 continue
             
-            expiry_date_str = position['metadata'].get('expiry_date')
+            expiry_date_str = position['metadata'].get('due_date')
             if not expiry_date_str:
                 continue
 
