@@ -88,12 +88,31 @@ class Backtester:
     ):
         self.spot_symbol = spot_symbol
         self.strategy = strategy
-        self.start_date = pd.to_datetime(start_date, utc=True)
-        self.end_date = pd.to_datetime(end_date, utc=True)
+        self.start_date_dt = pd.to_datetime(start_date, utc=True)
+        self.end_date_dt = pd.to_datetime(end_date, utc=True)
+
+        # Read 'lookback_days' from the strategy. Default to 0 if not found.
+        # getattr() safely checks if the attribute exists.
+        self.lookback_days = getattr(self.strategy, 'lookback_days', 0)
+
+        # Calculate the number of *calendar days* needed for the warm-up.
+        # We can't just subtract 252 days, because that includes weekends and holidays.
+        # We use a rough approximation: (lookback_days * 1.5) + 15 days.
+        # This creates a safe buffer to ensure we get enough *trading days*.
+        calendar_days_required = 0
+        if self.lookback_days > 0:
+            calendar_days_required = int(self.lookback_days * 1.5) + 15
+            print(f"INFO: Strategy requires {self.lookback_days} lookback days. Setting data load start {calendar_days_required} calendar days earlier.")
+
+        # Store the new, earlier date for *data loading*.
+        self.data_start_date_dt = self.start_date_dt - pd.DateOffset(days=calendar_days_required)
+        # The end date for loading is just the normal backtest end date.
+        self.data_end_date_dt = self.end_date_dt
+
+
         self.portfolio = Portfolio(initial_cash, stale_price_days)
         self.data_source: Optional[DataSource] = None
         self.event_handlers = event_handlers or [OptionExpirationHandler()]
-        
         self.trade_log: List[Dict[str, Any]] = []
         self.daily_history: List[Dict[str, Any]] = []
 
@@ -138,11 +157,32 @@ class Backtester:
             raise ValueError("Data source has not been set. Call set_data_source() before run().")
         
         options_stream = self.data_source.stream_options_data(
-            spot=self.spot_symbol, start_date=self.start_date, end_date=self.end_date
+            spot=self.spot_symbol, start_date=self.start_date_dt, end_date=self.end_date_dt
         )
         stock_data = pd.concat(list(self.data_source.stream_stock_data(
-            symbol=self.spot_symbol, start_date=self.start_date, end_date=self.end_date
+            symbol=self.spot_symbol, start_date=self.data_start_date_dt, end_date=self.data_end_date_dt
         )))
+
+        if 'date' not in stock_data.columns:
+            # Failsafe, though this would likely fail earlier in practice
+            raise KeyError("Stock data feed is missing the required 'date' column.")
+
+        # Convert to datetime if it's not already
+        if not pd.api.types.is_datetime64_any_dtype(stock_data['date']):
+            print(f"WARNING: Stock data 'date' column was not datetime. Converting and setting to UTC.")
+            stock_data['date'] = pd.to_datetime(stock_data['date'], utc=True)
+
+        # Check if the datetime column is naive (tz is None)
+        elif stock_data['date'].dt.tz is None:
+            # Column is naive (e.g., 'datetime64[ns]'). Localize it to UTC.
+            # We assume naive datetimes from any data source are intended to be UTC.
+            print(f"WARNING: Stock data 'date' column is timezone-naive. Localizing to UTC.")
+            stock_data['date'] = stock_data['date'].dt.tz_localize('UTC')
+
+        else:
+            # Column is already timezone-aware, just convert it to UTC for consistency.
+            stock_data['date'] = stock_data['date'].dt.tz_convert('UTC')
+
         return options_stream, stock_data
 
     def _execute_trades(self, date: pd.Timestamp, signals: List[Dict], current_options: pd.DataFrame, decision_options: pd.DataFrame):
@@ -271,29 +311,46 @@ class Backtester:
         Orchestrates the backtest, running the simulation day by day.
         """
         options_stream, stock_data = self._setup_data_streams()
-        
+
         for monthly_chunk in options_stream:
             dates_in_chunk = sorted(pd.to_datetime(monthly_chunk['time'].dt.date.unique(), utc=True))
 
             for date in tqdm(dates_in_chunk, desc="Processing days"):
-                if date > self.end_date:
+                if date > self.end_date_dt:
                     break
 
                 current_options = monthly_chunk[monthly_chunk['time'].dt.date == date.date()]
-                stock_slice = stock_data[stock_data['date'].dt.date <= date.date()]
                 
+                # 1. Get all stock data available up to and including the current day.
+                #    This variable `current_stock_history_full` now contains the
+                #    warm-up data + all data from the backtest start up to 'date'.
+                current_stock_history_full = stock_data[stock_data['date'] <= date].copy()
+
+                # 2. Get the lookback period we saved during initialization.
+                lookback_period = self.lookback_days
+
+                stock_history_slice = None
+                if lookback_period > 0:
+                    # 3. If we need a lookback, get the *last N rows* from the full history.
+                    #    .iloc[-N:] is the fastest way to do this.
+                    #    On day 1, this slice will contain the 252 warm-up days.
+                    stock_history_slice = current_stock_history_full.iloc[-lookback_period:]
+                else:
+                    # 4. If lookback is 0, just pass the expanding history as before.
+                    stock_history_slice = current_stock_history_full
+
                 # Retrieve signals generated on the previous day
                 signals_to_execute = self.daily_history[-1].get('signals', []) if self.daily_history else []
                 decision_options = self.daily_history[-1].get('decision_options', pd.DataFrame()) if self.daily_history else pd.DataFrame()
                 
                 # --- Daily Stages ---
                 self._execute_trades(date, signals_to_execute, current_options, decision_options)
-                self._handle_events(date, current_options, stock_slice)
+                self._handle_events(date, current_options, stock_history_slice)
                 
                 # Get current spot price for MTM
                 current_spot_price = None
-                if not stock_slice.empty and 'close' in stock_slice.columns and not stock_slice['close'].empty:
-                    current_spot_price = stock_slice['close'].iloc[-1]
+                if not stock_history_slice.empty and 'close' in stock_history_slice.columns and not stock_history_slice['close'].empty:
+                    current_spot_price = stock_history_slice['close'].iloc[-1]
                 
                 # Mark to market with current spot price
                 self.portfolio.mark_to_market(
@@ -302,12 +359,12 @@ class Backtester:
                     current_spot_price=current_spot_price
                 )
                 
-                # This stage preserves the original, user-facing strategy interface
+                # 5. Call the strategy with the new, correctly-sized 'stock_history_slice'
                 new_signals, custom_indicators = self.strategy.generate_signals(
-                    date=date,
-                    daily_options_data=current_options,
-                    stock_history=stock_slice,
-                    portfolio=self.portfolio
+                    date,
+                    current_options,
+                    stock_history_slice, # <-- Pass the new, smart slice
+                    self.portfolio
                 )
                 
                 self._log_daily_history(date, new_signals, custom_indicators, current_options)
