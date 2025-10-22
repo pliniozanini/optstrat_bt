@@ -288,7 +288,18 @@ class Backtester:
                 # --- Daily Stages ---
                 self._execute_trades(date, signals_to_execute, current_options, decision_options)
                 self._handle_events(date, current_options, stock_slice)
-                self.portfolio.mark_to_market(date, current_options.rename(columns={'symbol': 'ticker'}))
+                
+                # Get current spot price for MTM
+                current_spot_price = None
+                if not stock_slice.empty and 'close' in stock_slice.columns and not stock_slice['close'].empty:
+                    current_spot_price = stock_slice['close'].iloc[-1]
+                
+                # Mark to market with current spot price
+                self.portfolio.mark_to_market(
+                    date, 
+                    current_options.rename(columns={'symbol': 'ticker'}),
+                    current_spot_price=current_spot_price
+                )
                 
                 # This stage preserves the original, user-facing strategy interface
                 new_signals, custom_indicators = self.strategy.generate_signals(
@@ -299,6 +310,43 @@ class Backtester:
                 )
                 
                 self._log_daily_history(date, new_signals, custom_indicators, current_options)
+
+        # --- AFTER the main loop finishes ---
+
+        # Perform a final MTM on the end_date
+        if self.daily_history:
+            last_day_data = self.daily_history[-1]
+            final_date = last_day_data['date']
+            # Use 'decision_options' which holds the option data used for signals that day
+            final_options_data = last_day_data.get('decision_options', pd.DataFrame())
+            
+            # Get final spot price from the stock data
+            final_spot_row = stock_data[stock_data['date'].dt.date == final_date.date()]
+            final_spot_price = final_spot_row['close'].iloc[0] if not final_spot_row.empty else None
+
+            if not final_options_data.empty and final_spot_price is not None:
+                print(f"\nINFO: Performing final Mark-to-Market on {final_date.date()}...")
+                # Ensure the DataFrame has the 'ticker' column expected by mark_to_market
+                final_options_data_renamed = final_options_data.rename(columns={'symbol': 'ticker'})
+                
+                # Perform MTM using the final date, last available option prices, and spot price
+                self.portfolio.mark_to_market(
+                    final_date, 
+                    final_options_data_renamed,
+                    current_spot_price=final_spot_price
+                )
+
+                # Update the last history entry with the final MTM value
+                if self.portfolio.history:
+                    final_mtm_value = self.portfolio.history[-1].get('portfolio_value')
+                    final_cash_value = self.portfolio.history[-1].get('cash')
+                    if final_mtm_value is not None:
+                        self.daily_history[-1]['portfolio_value'] = final_mtm_value
+                        self.daily_history[-1]['cash'] = final_cash_value
+            else:
+                print(f"\nWARNING: No options data or spot price available for final Mark-to-Market on {final_date.date()}. Using last calculated value.")
+                # If no data, the last value calculated during the loop will be used
+                # which might be from the day before end_date if end_date had no trades/data.
 
         # Prepare final output
         final_summary = pd.DataFrame([h for h in self.daily_history if 'portfolio_value' in h])
