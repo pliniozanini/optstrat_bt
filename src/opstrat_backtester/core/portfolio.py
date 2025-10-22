@@ -1,5 +1,6 @@
 from typing import Dict, Any
 import pandas as pd
+import logging
 
 class Portfolio:
     """
@@ -38,11 +39,12 @@ class Portfolio:
     >>> portfolio.get_positions()
     {'AAPL': {'quantity': 100, 'cost_basis': 150.0, 'metadata': {'type': 'stock'}}}
     """
-    def __init__(self, initial_cash: float = 100_000):
+    def __init__(self, initial_cash: float = 100_000, stale_price_days: int = 3):
         self.cash = initial_cash
         self.positions = {}  # Enhanced position tracking with metadata
         self.history = []    # Log of daily portfolio value
         self.trades = []     # Log of all trades with metadata
+        self.stale_price_days = stale_price_days
 
     def add_trade(
         self, 
@@ -201,6 +203,8 @@ class Portfolio:
             # 1. Try to find price in today's market data
             try:
                 market_data_reset = market_data.reset_index(drop=True)
+                if (market_data_reset is None) or (market_data_reset.empty):
+                    raise KeyError("Market data is None or empty")
                 price_row = market_data_reset.loc[market_data_reset['ticker'] == ticker]
                 
                 if not price_row.empty and pd.notna(price_row['close'].iloc[0]):
