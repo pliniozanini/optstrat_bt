@@ -38,11 +38,12 @@ class Portfolio:
     >>> portfolio.get_positions()
     {'AAPL': {'quantity': 100, 'cost_basis': 150.0, 'metadata': {'type': 'stock'}}}
     """
-    def __init__(self, initial_cash: float = 100_000):
+    def __init__(self, initial_cash: float = 100_000, stale_price_days: int = 3):
         self.cash = initial_cash
         self.positions = {}  # Enhanced position tracking with metadata
         self.history = []    # Log of daily portfolio value
         self.trades = []     # Log of all trades with metadata
+        self.stale_price_days = stale_price_days
 
     def add_trade(
         self, 

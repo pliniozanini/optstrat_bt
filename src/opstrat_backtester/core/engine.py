@@ -83,13 +83,14 @@ class Backtester:
         start_date: str,
         end_date: str,
         initial_cash: float = 100_000,
-        event_handlers: Optional[List[EventHandler]] = None
+        event_handlers: Optional[List[EventHandler]] = None,
+        stale_price_days: int = 3
     ):
         self.spot_symbol = spot_symbol
         self.strategy = strategy
         self.start_date = pd.to_datetime(start_date, utc=True)
         self.end_date = pd.to_datetime(end_date, utc=True)
-        self.portfolio = Portfolio(initial_cash)
+        self.portfolio = Portfolio(initial_cash, stale_price_days)
         self.data_source: Optional[DataSource] = None
         self.event_handlers = event_handlers or [OptionExpirationHandler()]
         
