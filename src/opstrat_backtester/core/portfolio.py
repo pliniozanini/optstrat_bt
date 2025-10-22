@@ -1,5 +1,6 @@
 from typing import Dict, Any
 import pandas as pd
+import logging
 
 class Portfolio:
     """
@@ -202,6 +203,8 @@ class Portfolio:
             # 1. Try to find price in today's market data
             try:
                 market_data_reset = market_data.reset_index(drop=True)
+                if (market_data_reset is None) or (market_data_reset.empty):
+                    raise KeyError("Market data is None or empty")
                 price_row = market_data_reset.loc[market_data_reset['ticker'] == ticker]
                 
                 if not price_row.empty and pd.notna(price_row['close'].iloc[0]):
