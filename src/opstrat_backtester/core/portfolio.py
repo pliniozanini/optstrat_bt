@@ -130,8 +130,13 @@ class Portfolio:
             self.positions[ticker] = {
                 'quantity': 0,
                 'cost_basis': 0,
-                'metadata': {}  # Position-level metadata
+                'market_value': 0,
+                'last_price': price,
+                'last_price_date': trade_date,
+                'metadata': metadata or {}
             }
+        else:
+            self.positions[ticker]['metadata'].update(metadata or {})
             
         position = self.positions[ticker]
         old_quantity = position['quantity']
@@ -143,12 +148,17 @@ class Portfolio:
             new_cost = trade_cost
             position['cost_basis'] = (old_cost + new_cost) / new_quantity if new_quantity > 0 else 0
             
+            # Update last price for new buys
+            position['last_price'] = price
+            position['last_price_date'] = trade_date
+            
         position['quantity'] = new_quantity
         
-        # Update position metadata
+        # Update position metadata with allowed fields
+        allowed_metadata = ['type', 'due_date', 'strike', 'option_type', 'delta', 'hedged_stock_ticker']
         position['metadata'].update({
-            k: v for k, v in metadata.items() 
-            if k in ['type', 'due_date', 'strike', 'option_type', 'delta', 'hedged_stock_ticker']
+            k: v for k, v in (metadata or {}).items() 
+            if k in allowed_metadata
         })
         
         # Remove position if closed
@@ -157,13 +167,15 @@ class Portfolio:
             
         return True
 
-    def mark_to_market(self, date: pd.Timestamp, market_data: pd.DataFrame):
+    def mark_to_market(self, date: pd.Timestamp, market_data: pd.DataFrame, current_spot_price: float = None):
         """
-        Mark the portfolio positions to market using closing prices.
-
-        This method calculates the current market value of all positions using 
-        provided market data and updates the portfolio's historical record. It 
-        handles missing market data gracefully by printing warnings.
+        Mark portfolio to market using Stale Price with Conservative Fallback.
+        
+        This method implements a tiered approach to position valuation:
+        1. First tries to use current market data
+        2. Falls back to stale prices within the grace period
+        3. For options, falls back to intrinsic value when stale
+        4. Marks to zero as a last resort
 
         Parameters
         ----------
@@ -173,36 +185,101 @@ class Portfolio:
             DataFrame containing current market data with columns:
             - ticker: Instrument identifier
             - close: Closing price
-            Additional columns are ignored
-
-        Examples
-        --------
-        >>> market_data = pd.DataFrame({
-        ...     'ticker': ['AAPL', 'GOOGL'],
-        ...     'close': [150.0, 2800.0]
-        ... })
-        >>> portfolio.mark_to_market(
-        ...     pd.Timestamp('2023-01-01'),
-        ...     market_data
-        ... )
+        current_spot_price : float, optional
+            Current underlying spot price, required for intrinsic value calculation
         """
         total_value = self.cash
-        
+        positions_missing_data = []
+
         for ticker, position in self.positions.items():
-            # Find the closing price for the ticker in today's market data
+            current_price = None
+            price_source = "N/A"
+
+            # Skip non-option positions
+            is_option = position['metadata'].get('type') == 'option' if position.get('metadata') else False
+            
+            # 1. Try to find price in today's market data
             try:
-                current_price = market_data.loc[market_data['ticker'] == ticker, 'close'].iloc[0]
+                market_data_reset = market_data.reset_index(drop=True)
+                price_row = market_data_reset.loc[market_data_reset['ticker'] == ticker]
+                
+                if not price_row.empty and pd.notna(price_row['close'].iloc[0]):
+                    # 1a. Price Found
+                    current_price = price_row['close'].iloc[0]
+                    price_source = "MARKET_CLOSE"
+                    position['last_price'] = current_price
+                    position['last_price_date'] = date
+                else:
+                    raise KeyError("Price not found or NaN")
+                    
+            except (KeyError, IndexError):
+                # 2. Price Missing - Check staleness
+                days_stale = (date - position.get('last_price_date', date)).days
+                
+                if days_stale <= self.stale_price_days:
+                    # 2a. Grace Period: Use last known price
+                    current_price = position.get('last_price', 0)
+                    price_source = f"STALE_FWD ({days_stale}d)"
+                    logging.warning(
+                        f"[{date.date()}] MTM for {ticker}: No price. "
+                        f"Using stale price {current_price:.2f} from {position.get('last_price_date', 'N/A')}."
+                    )
+                
+                # 3. Price Stale: Fallback to Intrinsic Value (for options)
+                elif is_option and current_spot_price is not None:
+                    positions_missing_data.append(ticker)
+                    strike = position['metadata'].get('strike')
+                    option_type = position['metadata'].get('option_type')
+
+                    if strike is None or option_type is None:
+                        # Failsafe: Cannot calculate intrinsic, mark to zero
+                        current_price = 0.0
+                        price_source = "ZERO (STALE/NO_METADATA)"
+                        logging.error(
+                            f"[{date.date()}] MTM for {ticker}: Price stale ({days_stale}d). "
+                            f"FALLING BACK TO ZERO (missing strike or option_type)."
+                        )
+                    else:
+                        # Calculate intrinsic value
+                        if option_type.upper() == 'PUT':
+                            intrinsic_value = max(0, strike - current_spot_price)
+                        else:  # CALL
+                            intrinsic_value = max(0, current_spot_price - strike)
+                        
+                        current_price = intrinsic_value
+                        price_source = f"INTRINSIC (STALE {days_stale}d)"
+                        logging.warning(
+                            f"[{date.date()}] MTM for {ticker}: Price stale ({days_stale}d). "
+                            f"FALLING BACK TO INTRINSIC VALUE: {current_price:.2f}"
+                        )
+                    
+                    # Update last_price to this new conservative value
+                    position['last_price'] = current_price
+                    position['last_price_date'] = date
+                
+                else:
+                    # For non-options or missing spot price, mark to zero
+                    current_price = 0.0
+                    price_source = "ZERO (NO_DATA)"
+                    logging.error(
+                        f"[{date.date()}] MTM for {ticker}: No price data "
+                        f"and no fallback available. Marking to zero."
+                    )
+
+            # Calculate final value for this position
+            if current_price is not None:
                 market_value = position['quantity'] * current_price
                 position['market_value'] = market_value
-                position['last_price'] = current_price
+                position['mtm_price_source'] = price_source
                 total_value += market_value
-            except (KeyError, IndexError):
-                print(f"Warning: No market data found for {ticker} on {date}")
-        
+
+        # Record the portfolio value for this date
         self.history.append({
             'date': date,
             'portfolio_value': total_value,
-            'cash': self.cash
+            'cash': self.cash,
+            'positions_value': total_value - self.cash,
+            'missing_mtm_tickers': positions_missing_data
         })
 
     def get_positions(self) -> dict:
