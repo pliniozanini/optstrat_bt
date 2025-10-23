@@ -324,7 +324,7 @@ class Backtester:
                 # 1. Get all stock data available up to and including the current day.
                 #    This variable `current_stock_history_full` now contains the
                 #    warm-up data + all data from the backtest start up to 'date'.
-                current_stock_history_full = stock_data[stock_data['date'] <= date].copy()
+                current_stock_history_full = stock_data[stock_data['date'].dt.date <= date.date()].copy()
 
                 # 2. Get the lookback period we saved during initialization.
                 lookback_period = self.lookback_days

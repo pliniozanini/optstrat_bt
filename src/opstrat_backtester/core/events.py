@@ -121,8 +121,9 @@ class OptionExpirationHandler(EventHandler):
         # This robustly gets the stock price for the specific day needed.
         stock_price_row = stock_data[stock_data['date'].dt.date == current_date.date()]
         if stock_price_row.empty:
-            # Silently return; no action can be taken without the stock price.
-            return
+            # print all the details to debug, including limits and details oof stock data          
+            raise ValueError(f"No stock price data found for expirations in {current_date.date()}")
+            
         current_stock_price = stock_price_row.iloc[0]['close']
 
         positions_to_check = list(portfolio.get_positions().keys())
