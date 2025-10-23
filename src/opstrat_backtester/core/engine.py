@@ -313,13 +313,28 @@ class Backtester:
         options_stream, stock_data = self._setup_data_streams()
 
         for monthly_chunk in options_stream:
-            dates_in_chunk = sorted(pd.to_datetime(monthly_chunk['time'].dt.date.unique(), utc=True))
+            # ---> Group options data by date for faster access <---
+            if not monthly_chunk.empty:
+                # Group by the date part of the 'time' column
+                grouped_options = monthly_chunk.groupby(monthly_chunk['time'].dt.date)
+                # Get the unique dates from the groups to iterate over
+                dates_in_chunk = sorted(grouped_options.groups.keys())
+            else:
+                # If the chunk is empty, create an empty list of dates to avoid errors
+                grouped_options = {}
+                dates_in_chunk = []
 
-            for date in tqdm(dates_in_chunk, desc="Processing days"):
+            # ---> Loop through the grouped dates and data <---
+            for date_obj in tqdm(dates_in_chunk, desc="Processing days"):
+                # Convert the date object back to a timezone-aware Timestamp for consistency
+                date = pd.Timestamp(date_obj, tz='UTC')
+
+                # Stop if we go past the desired end date
                 if date > self.end_date_dt:
                     break
 
-                current_options = monthly_chunk[monthly_chunk['time'].dt.date == date.date()]
+                # ---> Get the options data for the current day directly from the group <---
+                current_options = grouped_options.get_group(date_obj)
                 
                 # 1. Get all stock data available up to and including the current day.
                 #    This variable `current_stock_history_full` now contains the
@@ -345,7 +360,10 @@ class Backtester:
                 
                 # --- Daily Stages ---
                 self._execute_trades(date, signals_to_execute, current_options, decision_options)
-                self._handle_events(date, current_options, stock_history_slice)
+                try:
+                    self._handle_events(date, current_options, stock_history_slice)
+                except Exception as e:
+                    print(f"Error handling events on {date}: {str(e)}")
                 
                 # Get current spot price for MTM
                 current_spot_price = None

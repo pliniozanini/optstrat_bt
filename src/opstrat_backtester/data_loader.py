@@ -183,7 +183,10 @@ class OplabDataSource(DataSource):
             if year_data is not None and not year_data.empty:
                 # This filter logic is perfect and remains unchanged.
                 # It correctly slices the full-year data to what the user asked for.
-                mask = (year_data['date'] >= start) & (year_data['date'] <= end)
+                mask = (
+                    (year_data['date'].dt.date >= start.date()) 
+                    & (year_data['date'].dt.date <= end.date())
+                )
                 filtered_data = year_data.loc[mask]
 
                 if not filtered_data.empty:

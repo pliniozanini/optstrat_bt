@@ -193,6 +193,11 @@ class Portfolio:
         total_value = self.cash
         positions_missing_data = []
 
+        # ---> ADD THIS: Create a Series for quick price lookups by ticker <---
+        # Set 'ticker' as the index and select the 'close' column.
+        # Use an empty Series if market_data is None or empty to prevent errors.
+        market_prices = market_data.set_index('ticker')['close'] if market_data is not None and not market_data.empty else pd.Series(dtype=float)
+
         for ticker, position in self.positions.items():
             current_price = None
             price_source = "N/A"
@@ -200,21 +205,18 @@ class Portfolio:
             # Skip non-option positions
             is_option = position['metadata'].get('type') == 'option' if position.get('metadata') else False
             
-            # 1. Try to find price in today's market data
+            # 1. Try to find price in today's market data using the fast lookup
             try:
-                market_data_reset = market_data.reset_index(drop=True)
-                if (market_data_reset is None) or (market_data_reset.empty):
-                    raise KeyError("Market data is None or empty")
-                price_row = market_data_reset.loc[market_data_reset['ticker'] == ticker]
-                
-                if not price_row.empty and pd.notna(price_row['close'].iloc[0]):
-                    # 1a. Price Found
-                    current_price = price_row['close'].iloc[0]
+                # Try getting the price directly using the ticker index
+                current_price = market_prices.loc[ticker]
+                # Check if the found price is valid (not NaN)
+                if pd.notna(current_price):
                     price_source = "MARKET_CLOSE"
                     position['last_price'] = current_price
                     position['last_price_date'] = date
                 else:
-                    raise KeyError("Price not found or NaN")
+                    # If price is NaN, treat it as not found
+                    raise KeyError("Price is NaN")
                     
             except (KeyError, IndexError):
                 # 2. Price Missing - Check staleness
