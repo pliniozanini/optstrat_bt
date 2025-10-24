@@ -1,6 +1,7 @@
 from typing import Dict, Any
 import pandas as pd
 import logging
+from . import VerbosityAdapter
 
 class Portfolio:
     """
@@ -14,6 +15,10 @@ class Portfolio:
     ----------
     initial_cash : float, optional
         Initial cash balance in the portfolio. Default is 100,000.
+    stale_price_days : int, optional
+        Number of days to use stale prices before marking to zero. Default is 3.
+    logger : VerbosityAdapter, optional
+        Logger for controlling output verbosity. If None, creates a default logger.
 
     Attributes
     ----------
@@ -39,12 +44,13 @@ class Portfolio:
     >>> portfolio.get_positions()
     {'AAPL': {'quantity': 100, 'cost_basis': 150.0, 'metadata': {'type': 'stock'}}}
     """
-    def __init__(self, initial_cash: float = 100_000, stale_price_days: int = 3):
+    def __init__(self, initial_cash: float = 100_000, stale_price_days: int = 3, logger: VerbosityAdapter = None):
         self.cash = initial_cash
         self.positions = {}  # Enhanced position tracking with metadata
         self.history = []    # Log of daily portfolio value
         self.trades = []     # Log of all trades with metadata
         self.stale_price_days = stale_price_days
+        self.logger = logger or VerbosityAdapter("high")
 
     def add_trade(
         self, 
@@ -226,7 +232,7 @@ class Portfolio:
                     # 2a. Grace Period: Use last known price
                     current_price = position.get('last_price', 0)
                     price_source = f"STALE_FWD ({days_stale}d)"
-                    logging.warning(
+                    self.logger.warning(
                         f"[{date.date()}] MTM for {ticker}: No price. "
                         f"Using stale price {current_price:.2f} from {position.get('last_price_date', 'N/A')}."
                     )
@@ -241,7 +247,7 @@ class Portfolio:
                         # Failsafe: Cannot calculate intrinsic, mark to zero
                         current_price = 0.0
                         price_source = "ZERO (STALE/NO_METADATA)"
-                        logging.error(
+                        self.logger.error(
                             f"[{date.date()}] MTM for {ticker}: Price stale ({days_stale}d). "
                             f"FALLING BACK TO ZERO (missing strike or option_type)."
                         )
@@ -254,7 +260,7 @@ class Portfolio:
                         
                         current_price = intrinsic_value
                         price_source = f"INTRINSIC (STALE {days_stale}d)"
-                        logging.warning(
+                        self.logger.warning(
                             f"[{date.date()}] MTM for {ticker}: Price stale ({days_stale}d). "
                             f"FALLING BACK TO INTRINSIC VALUE: {current_price:.2f}"
                         )
@@ -267,7 +273,7 @@ class Portfolio:
                     # For non-options or missing spot price, mark to zero
                     current_price = 0.0
                     price_source = "ZERO (NO_DATA)"
-                    logging.error(
+                    self.logger.error(
                         f"[{date.date()}] MTM for {ticker}: No price data "
                         f"and no fallback available. Marking to zero."
                     )

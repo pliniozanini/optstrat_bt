@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 import pandas as pd
 from .portfolio import Portfolio
+from . import VerbosityAdapter
 
 class EventHandler(ABC):
     """
@@ -101,6 +102,11 @@ class OptionExpirationHandler(EventHandler):
     2. Calculating their intrinsic value
     3. Closing the positions with appropriate P&L
 
+    Parameters
+    ----------
+    logger : VerbosityAdapter, optional
+        Logger for controlling output verbosity. If None, creates a default logger.
+
     Examples
     --------
     >>> handler = OptionExpirationHandler()
@@ -117,6 +123,9 @@ class OptionExpirationHandler(EventHandler):
     - Put option intrinsic value = max(0, strike - stock_price)
     - The handler logs expiration events for transparency
     """
+    def __init__(self, logger: VerbosityAdapter = None):
+        self.logger = logger or VerbosityAdapter("high")
+
     def handle(self, current_date: pd.Timestamp, portfolio: Portfolio, market_data: pd.DataFrame, stock_data: pd.DataFrame):
         # This robustly gets the stock price for the specific day needed.
         stock_price_row = stock_data[stock_data['date'].dt.date == current_date.date()]
@@ -140,7 +149,7 @@ class OptionExpirationHandler(EventHandler):
             
             # This comparison is now reliable.
             if expiry_ts.date() == current_date.date():
-                print(f"INFO [{current_date.date()}]: Option {ticker} has expired. Processing exercise...")
+                self.logger.info(f"Option {ticker} has expired on {current_date.date()}. Processing exercise...")
                 strike = position['metadata'].get('strike', 0)
                 opt_type = position['metadata'].get('option_type', '')
                 qty = position['quantity']

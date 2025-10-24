@@ -1,10 +1,11 @@
 import pandas as pd
 from tqdm import tqdm
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, List, Dict, Any, Tuple, Literal
 from .strategy import Strategy
 from .portfolio import Portfolio
 from .events import EventHandler, OptionExpirationHandler
 from ..data.datasource import DataSource
+from . import VerbosityAdapter
 
 class Backtester:
     """
@@ -34,6 +35,13 @@ class Backtester:
     event_handlers : list of EventHandler, optional
         List of event handlers for processing market events.
         Default is [OptionExpirationHandler()]
+    stale_price_days : int, optional
+        Number of days to use stale prices before marking to zero. Default is 3
+    verbosity : str, optional
+        Logging verbosity level. Options: "high", "moderate", "low". Default is "high"
+        - "high": All messages (current behavior)
+        - "moderate": Warnings and key lifecycle messages only
+        - "low": Silent operation
 
     Attributes
     ----------
@@ -84,8 +92,11 @@ class Backtester:
         end_date: str,
         initial_cash: float = 100_000,
         event_handlers: Optional[List[EventHandler]] = None,
-        stale_price_days: int = 3
+        stale_price_days: int = 3,
+        verbosity: Literal["high", "moderate", "low"] = "low"
     ):
+        # Initialize logger
+        self.logger = VerbosityAdapter(verbosity)
         self.spot_symbol = spot_symbol
         self.strategy = strategy
         self.start_date_dt = pd.to_datetime(start_date, utc=True)
@@ -102,17 +113,16 @@ class Backtester:
         calendar_days_required = 0
         if self.lookback_days > 0:
             calendar_days_required = int(self.lookback_days * 1.5) + 15
-            print(f"INFO: Strategy requires {self.lookback_days} lookback days. Setting data load start {calendar_days_required} calendar days earlier.")
+            self.logger.info(f"Strategy requires {self.lookback_days} lookback days. Setting data load start {calendar_days_required} calendar days earlier.", always_show=True)
 
         # Store the new, earlier date for *data loading*.
         self.data_start_date_dt = self.start_date_dt - pd.DateOffset(days=calendar_days_required)
         # The end date for loading is just the normal backtest end date.
         self.data_end_date_dt = self.end_date_dt
 
-
-        self.portfolio = Portfolio(initial_cash, stale_price_days)
+        self.portfolio = Portfolio(initial_cash, stale_price_days, self.logger)
         self.data_source: Optional[DataSource] = None
-        self.event_handlers = event_handlers or [OptionExpirationHandler()]
+        self.event_handlers = event_handlers or [OptionExpirationHandler(self.logger)]
         self.trade_log: List[Dict[str, Any]] = []
         self.daily_history: List[Dict[str, Any]] = []
 
@@ -169,14 +179,14 @@ class Backtester:
 
         # Convert to datetime if it's not already
         if not pd.api.types.is_datetime64_any_dtype(stock_data['date']):
-            print(f"WARNING: Stock data 'date' column was not datetime. Converting and setting to UTC.")
+            self.logger.warning(f"Stock data 'date' column was not datetime. Converting and setting to UTC.")
             stock_data['date'] = pd.to_datetime(stock_data['date'], utc=True)
 
         # Check if the datetime column is naive (tz is None)
         elif stock_data['date'].dt.tz is None:
             # Column is naive (e.g., 'datetime64[ns]'). Localize it to UTC.
             # We assume naive datetimes from any data source are intended to be UTC.
-            print(f"WARNING: Stock data 'date' column is timezone-naive. Localizing to UTC.")
+            self.logger.warning(f"Stock data 'date' column is timezone-naive. Localizing to UTC.")
             stock_data['date'] = stock_data['date'].dt.tz_localize('UTC')
 
         else:
@@ -363,7 +373,7 @@ class Backtester:
                 try:
                     self._handle_events(date, current_options, stock_history_slice)
                 except Exception as e:
-                    print(f"Error handling events on {date}: {str(e)}")
+                    self.logger.error(f"Error handling events on {date}: {str(e)}")
                 
                 # Get current spot price for MTM
                 current_spot_price = None
@@ -401,7 +411,7 @@ class Backtester:
             final_spot_price = final_spot_row['close'].iloc[0] if not final_spot_row.empty else None
 
             if not final_options_data.empty and final_spot_price is not None:
-                print(f"\nINFO: Performing final Mark-to-Market on {final_date.date()}...")
+                self.logger.info(f"Performing final Mark-to-Market on {final_date.date()}...", always_show=True)
                 # Ensure the DataFrame has the 'ticker' column expected by mark_to_market
                 final_options_data_renamed = final_options_data.rename(columns={'symbol': 'ticker'})
                 
@@ -420,7 +430,7 @@ class Backtester:
                         self.daily_history[-1]['portfolio_value'] = final_mtm_value
                         self.daily_history[-1]['cash'] = final_cash_value
             else:
-                print(f"\nWARNING: No options data or spot price available for final Mark-to-Market on {final_date.date()}. Using last calculated value.")
+                self.logger.warning(f"No options data or spot price available for final Mark-to-Market on {final_date.date()}. Using last calculated value.")
                 # If no data, the last value calculated during the loop will be used
                 # which might be from the day before end_date if end_date had no trades/data.
 
