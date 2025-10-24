@@ -38,10 +38,14 @@ class Backtester:
     stale_price_days : int, optional
         Number of days to use stale prices before marking to zero. Default is 3
     verbosity : str, optional
-        Logging verbosity level. Options: "high", "moderate", "low". Default is "high"
+        Logging verbosity level. Options: "high", "moderate", "low". Default is "low"
         - "high": All messages (current behavior)
         - "moderate": Warnings and key lifecycle messages only
         - "low": Silent operation
+    commission_per_contract : float, optional
+        Fixed commission cost per option contract in BRL. Default is 0.50
+    fees_pct : float, optional
+        Percentage-based fees applied to trade value (e.g., B3 fees). Default is 0.0001 (0.01%)
 
     Attributes
     ----------
@@ -93,7 +97,9 @@ class Backtester:
         initial_cash: float = 100_000,
         event_handlers: Optional[List[EventHandler]] = None,
         stale_price_days: int = 3,
-        verbosity: Literal["high", "moderate", "low"] = "low"
+        verbosity: Literal["high", "moderate", "low"] = "low",
+        commission_per_contract: float = 0.0, # Example: 0.5 = R$ 0.50 per contract
+        fees_pct: float = 0.0 # Example: 0.001 = 0.1% for B3 fees etc.
     ):
         # Initialize logger
         self.logger = VerbosityAdapter(verbosity)
@@ -125,6 +131,10 @@ class Backtester:
         self.event_handlers = event_handlers or [OptionExpirationHandler(self.logger)]
         self.trade_log: List[Dict[str, Any]] = []
         self.daily_history: List[Dict[str, Any]] = []
+        # --- STORE NEW PARAMETERS ---
+        self.commission_per_contract = commission_per_contract
+        self.fees_pct = fees_pct
+        # --- END STORE ---
 
     def set_data_source(self, data_source: DataSource):
         """
@@ -230,6 +240,13 @@ class Backtester:
 
             price = execution_data['high'].iloc[0] if qty > 0 else execution_data['low'].iloc[0]
             
+            # --- CALCULATE COSTS ---
+            trade_value = abs(qty) * price
+            commission_cost = abs(qty) * self.commission_per_contract
+            fee_cost = trade_value * self.fees_pct
+            total_costs = commission_cost + fee_cost
+            # --- END CALCULATE COSTS ---
+
             # Retrieve original option data to enrich metadata
             decision_row = decision_options[decision_options['symbol'] == ticker].iloc[0]
             action = 'BUY' if qty > 0 else 'SELL'
@@ -238,9 +255,13 @@ class Backtester:
                 'option_type': decision_row.get('type'),
                 'due_date': decision_row.get('due_date'),
                 'strike': decision_row.get('strike'),
-                'action': action
+                'action': action,
+                # --- ADD COSTS TO METADATA (Optional but good for logging) ---
+                'commission': commission_cost,
+                'fees': fee_cost
+                # --- END ADD COSTS ---
             }
-            self.portfolio.add_trade(date, ticker, qty, price, metadata=trade_metadata)
+            self.portfolio.add_trade(date, ticker, qty, price, metadata=trade_metadata, commission=commission_cost, fees=fee_cost)
 
     def _handle_events(self, date: pd.Timestamp, current_options: pd.DataFrame, stock_slice: pd.DataFrame):
         """

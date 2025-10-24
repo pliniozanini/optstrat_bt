@@ -58,7 +58,9 @@ class Portfolio:
         ticker: str, 
         quantity: int, 
         price: float,
-        metadata: Dict[str, Any] = None
+        metadata: Dict[str, Any] = None,
+        commission: float = 0.0,
+        fees: float = 0.0
     ):
         """
         Execute a trade and update the portfolio state.
@@ -86,6 +88,10 @@ class Portfolio:
             - expiry_date: Option expiration date
             - delta: Option delta
             - hedged_stock_ticker: For delta hedging
+        commission : float, optional
+            Fixed commission cost for the trade. Default is 0.0
+        fees : float, optional
+            Variable fees for the trade (e.g., percentage-based fees). Default is 0.0
 
         Returns
         -------
@@ -116,19 +122,40 @@ class Portfolio:
         ...         'expiry_date': '2023-01-21'
         ...     }
         ... )
+        
+        >>> # Option trade with commission and fees
+        >>> portfolio.add_trade(
+        ...     pd.Timestamp('2023-01-01'),
+        ...     'AAPL230121C150',
+        ...     1,  # Buy 1 contract
+        ...     5.0,  # at $5.00 premium
+        ...     {
+        ...         'type': 'option',
+        ...         'option_type': 'CALL',
+        ...         'strike': 150.0,
+        ...         'expiry_date': '2023-01-21'
+        ...     },
+        ...     commission=0.50,  # R$ 0.50 commission per contract
+        ...     fees=0.005  # R$ 0.005 in fees
+        ... )
         """
         metadata = metadata or {}
-        trade_cost = quantity * price
+        trade_cost = quantity * price # Raw cost of shares/options
+        total_transaction_cost = commission + fees # Additional costs
 
-        self.cash -= trade_cost
-        
+        # Subtract raw cost AND additional costs
+        self.cash -= (trade_cost + total_transaction_cost)
+
         # Record the trade with full metadata
         trade_record = {
             'date': trade_date,
             'ticker': ticker,
             'quantity': quantity,
             'price': price,
-            'cost': trade_cost,
+            'cost': trade_cost, # Raw cost
+            'commission': commission,
+            'fees': fees,
+            'total_trade_cost': trade_cost + total_transaction_cost, # Including costs
             **metadata  # Include all additional metadata
         }
         self.trades.append(trade_record)
