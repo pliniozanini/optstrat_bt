@@ -140,8 +140,8 @@ class Portfolio:
         ... )
         """
         metadata = metadata or {}
-        trade_cost = quantity * price # Raw cost of shares/options
-        total_transaction_cost = commission + fees # Additional costs
+        trade_cost = quantity * price  # Raw cost of shares/options
+        total_transaction_cost = commission + fees  # Additional costs
 
         # Subtract raw cost AND additional costs
         self.cash -= (trade_cost + total_transaction_cost)
@@ -152,10 +152,10 @@ class Portfolio:
             'ticker': ticker,
             'quantity': quantity,
             'price': price,
-            'cost': trade_cost, # Raw cost
+            'cost': trade_cost,  # Raw cost
             'commission': commission,
             'fees': fees,
-            'total_trade_cost': trade_cost + total_transaction_cost, # Including costs
+            'total_trade_cost': trade_cost + total_transaction_cost,  # Including costs
             **metadata  # Include all additional metadata
         }
         self.trades.append(trade_record)

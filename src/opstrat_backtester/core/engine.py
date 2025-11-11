@@ -356,7 +356,10 @@ class Backtester:
                 dates_in_chunk = []
 
             # ---> Loop through the grouped dates and data <---
-            for date_obj in tqdm(dates_in_chunk, desc="Processing days"):
+            for date_obj in (
+                tqdm(dates_in_chunk, desc="Processing days")
+                if self.logger.verbosity == 'high' else dates_in_chunk
+            ):
                 # Convert the date object back to a timezone-aware Timestamp for consistency
                 date = pd.Timestamp(date_obj, tz='UTC')
 
