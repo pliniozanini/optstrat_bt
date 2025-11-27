@@ -1,6 +1,6 @@
 [project]
 name = "opstrat_backtester"
-version = "0.1.1"
+version = "0.1.2"
 description = "Options strategy backtesting library"
 authors = [
     { name = "Plinio Zanini", email = "pliniozanini@hotmail.com" }
