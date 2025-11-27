@@ -14,7 +14,8 @@ dependencies = [
     "tqdm",
     "requests",
     "pyarrow",
-    "python-dotenv"
+    "python-dotenv",
+    "fasteners"
 ]
 classifiers = [
     "Programming Language :: Python :: 3",
