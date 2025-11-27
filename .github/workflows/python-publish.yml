@@ -72,3 +72,36 @@ jobs:
         with:
           user: __token__
           password: ${{ secrets.PYPI_API_TOKEN }}
+on:
+  push:
+    tags:
+      - 'v*'          # Only tag pushes trigger this workflow
+
+jobs:
+  publish-to-pypi:
+    # This job only runs when you create a new release on GitHub
+    needs: build-and-test # It will only run if the build-and-test job succeeds
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags')
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install build
+
+      - name: Build package
+        run: python -m build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@v1.5.0
+        with:
+          user: __token__
+          password: ${{ secrets.PYPI_API_TOKEN }}
